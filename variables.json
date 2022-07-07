@@ -1,0 +1,17 @@
+{
+    "UploadPathFile": "/opt/airflow/data/cryptoPrices/",
+    "datafilepath": "/opt/airflow/data/cryptoPrices/",
+    "fileList": [
+        "bat-mxn.csv",
+        "bch-mxn.csv",
+        "btc-mxn.csv",
+        "dai-mxn.csv",
+        "eth-mxn.csv",
+        "gnt-mxn.csv",
+        "ltc-mxn.csv",
+        "mana-mxn.csv",
+        "tusd-mxn.csv",
+        "xrp-mxn.csv"
+    ],
+    "postgress_connID": "oltp"
+}
