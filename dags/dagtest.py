@@ -29,6 +29,7 @@ list_of_files= Variable.get("fileList",deserialize_json = True)
 GCS_BUCKET="jacobs_bucket"
 GCS_CONN_ID=Variable.get("gcs_connID")
 
+
 #Environment functions
 """
 def on_failure_callback(context):
