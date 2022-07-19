@@ -3,3 +3,4 @@ plugins
 data
 __pycache__
 .DS_Store
+notes
