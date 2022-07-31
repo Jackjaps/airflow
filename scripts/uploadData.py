@@ -10,9 +10,7 @@ def upload_blob(bucket_name, source_file_name, destination_blob_name,cred):
     blob.upload_from_filename(source_file_name)
     end_time =  datetime.datetime.today()
     LogUploadMetaData(start_time,end_time,source_file_name,datetoday)
-   
-
-
+º
 def LogUploadMetaData(stime,etime,filename,ldate):
     file_stats = os.stat(filename)
     fsize= file_stats.st_size

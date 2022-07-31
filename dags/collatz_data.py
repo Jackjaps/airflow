@@ -25,10 +25,11 @@ from airflow.providers.google.cloud.transfers.postgres_to_gcs import PostgresToG
 
 #Env Variables 
 POSTGRES_CONN_ID=Variable.get("postgress_connID")
-PATH_FILE=Variable.get("UploadPathFile")
-list_of_files= Variable.get("fileList",deserialize_json = True)
+PATH_FILE=Variable.get("collatzPath")
+list_of_files= Variable.get("collatzFiles",deserialize_json = True)
 GCS_BUCKET="jacobs_bucket"
 GCS_CONN_ID=Variable.get("gcs_connID")
+
 
 
 #Environment functions
@@ -51,12 +52,9 @@ def on_failure_callback(context):
         channel=SLACK_CHANNEL,
         username=SLACK_USER)
     error_message.execute({})
-
-    def pull_function(**kwargs):
-    ti = kwargs['ti']
-    ls = ti.xcom_pull(task_ids='getList')
-    print(ls)
 """
+
+
 class NewHookPostgress(PostgresHook):
     def bulk_load(self, table: str, tmp_file: str) -> None:
         self.copy_expert(f"COPY {table} FROM STDIN WITH CSV HEADER QUOTE '\"' ", tmp_file)
@@ -98,7 +96,7 @@ def validation_function():
 
 
 def valid(file,**kwargs):
-    task_name= "rowsInFile_"+file
+    task_name= "Rows_In_File_"+file
     ti = kwargs['ti']
     ls = ti.xcom_pull(task_ids=task_name)
     number = ls.split(" ")
@@ -107,7 +105,7 @@ def valid(file,**kwargs):
     return int(number[0])-1
 
 with DAG(
-    'LoadInformation',
+    'Load_Collatz_Data',
     # These args will get passed on to each operator
     # You can override them on a per-task basis during operator initialization
     default_args={
@@ -130,7 +128,7 @@ with DAG(
         # 'sla_miss_callback': yet_another_function,
         # 'trigger_rule': 'all_success'
     },
-    description='A simple tutorial DAG',
+    description='upload big data into gcp',
     schedule_interval=timedelta(days=1),
     start_date=datetime(2022, 7, 1),
     catchup=False,
@@ -140,112 +138,52 @@ with DAG(
     start =   DummyOperator(task_id="Start")
     endgame = DummyOperator(task_id="End")
 
-    create_common_table = PostgresOperator(
-        task_id="create_common_table",
+    # PostgresOperator - Create Staging Tables
+    create_table = PostgresOperator(
+        task_id="create_table_collatz_table",
         postgres_conn_id=POSTGRES_CONN_ID,
-        sql="""CREATE TABLE IF NOT EXISTS cryptoDataCommon (
-            date date NOT NULL,
-            open decimal,
-            low decimal,
-            high decimal,
-            close decimal,
-            volume decimal,
-            crypto varchar(50)
-            );""",
+        sql="""CREATE TABLE IF NOT EXISTS CollatzResults (
+                    number int NOT NULL,
+                    iterations int,
+                    maxValue int,
+                    starttime NUMERIC(10,6),
+                    endtime NUMERIC(10,6),
+                    differ NUMERIC(10,16)
+                    );"""
+    )
+    truncate_table = PostgresOperator(
+        task_id="truncate_table_collatz_table",
+        postgres_conn_id=POSTGRES_CONN_ID,
+        sql="TRUNCATE table CollatzResults;"
     )
 
     with TaskGroup(group_id='dynamic_tasks_group',prefix_group_id=False) as dynamic_tasks_group:
         if list_of_files:
-            logging.info("List Of Files  {0}".format(list_of_files))
+            logging.info("Files to process:  {0}".format(list_of_files))
             for i,fileN in enumerate(list_of_files):
                 #Dimanic Variables
-                file_name=fileN[0:3]
-                
-                # PostgresOperator - Create Staging Tables
-                create_table = PostgresOperator(
-                    task_id="create_table_{}".format(file_name),
-                    postgres_conn_id=POSTGRES_CONN_ID,
-                    sql="""CREATE TABLE IF NOT EXISTS cryptoData_{{ params.cripto }}_stg (
-                        date date NOT NULL,
-                        open VARCHAR(20),
-                        low VARCHAR(20),
-                        high VARCHAR(20),
-                        close VARCHAR(20),
-                        volume VARCHAR(20)
-                        );""",
-                    params={'cripto': file_name }
-                )
-
-                # PostgresOperator - Truncate Staging Tables
-                truncate_table = PostgresOperator(
-                    task_id="truncate_table_{}".format(file_name),
-                    postgres_conn_id=POSTGRES_CONN_ID,
-                    sql="""truncate table cryptoData_{{ params.cripto }}_stg;""",
-                    params={'cripto': file_name }
-                )
-
-                # BashOperator - Data Validation File Rows
-                dv_file_rows = BashOperator(
-                    task_id="rowsInFile_{}".format(file_name),
-                    bash_command="echo $(wc -l /opt/airflow/data/cryptoPrices/$file)",
-                    env={"file":fileN}
-                    )
-                # BashOperator - Extract value of Row Count into Airflow XCOM 
-                extractRowCount = PythonOperator(
-                    task_id="validations{}".format(file_name),
-                    python_callable=valid,
-                    provide_context=True,
-                    op_kwargs= {"file":file_name}
-                )
-
+                file_name=fileN
                 # PythonOperator - Upload files to Postgres Database
                 up_load_files_to_db = PythonOperator(
                     task_id='upload_files_toDB_{}'.format(file_name),
                     python_callable=PosgresBulkLoadCSV,
-                    op_kwargs={"file_path": "/opt/airflow/data/cryptoPrices/",
+                    op_kwargs={"file_path": PATH_FILE,
                     "filen": fileN,
-                    "table": "cryptoData_{0}_stg".format(file_name)
+                    "table": "CollatzResults"
                     },
                     provide_context=True
                 )
-
-                # PostgresOperator - Move and Clean into Common Table
-                move_clean_data = PostgresOperator(
-                    task_id="move_clean_data_{}".format(file_name),
-                    postgres_conn_id=POSTGRES_CONN_ID,
-                    sql="""
-                        insert into {{ params.targetTable }} select 
-                        date,
-                        CAST(REPLACE(open,',','') AS DECIMAL),
-                        CAST(REPLACE(low, ',', '') AS DECIMAL),
-                        CAST(REPLACE(high, ',', '') AS DECIMAL),
-                        CAST(REPLACE(close, ',', '') AS DECIMAL),
-                        CAST(REPLACE(volume, ',', '') AS DECIMAL),
-                        '{{ params.cripto }}'
-                        from cryptoData_{{ params.cripto }}_stg;
-                        """,
-                    params={'cripto': file_name,'targetTable':"cryptoDataCommon" }
-                )
-
-                #SQLValueCheckOperator - Validate XCOM Row count from File vs Common Table in DB
-                value_check = SQLValueCheckOperator(
-                    task_id="check_row_count_{}".format(file_name),
-                    conn_id=POSTGRES_CONN_ID,
-                    database='oltp',
-                    sql="SELECT COUNT(*) FROM cryptoDataCommon where crypto = '{0}';".format(file_name),
-                    pass_value= f"{{{{ task_instance.xcom_pull(task_ids='validations{file_name}') }}}}",
-                    email_on_failure = "jacobo.mleguizamo@gmail.com"
-                )
-                create_table >> truncate_table >> dv_file_rows >> extractRowCount >> up_load_files_to_db >> move_clean_data >> value_check
+                
+            up_load_files_to_db
     
     upload_data_to_gcs = PostgresToGCSOperator(
         task_id="upload_to_gcs",
         postgres_conn_id=POSTGRES_CONN_ID,
-        sql="SELECT * FROM cryptoDataCommon", 
+        sql="SELECT * FROM CollatzResults", 
         bucket=GCS_BUCKET, 
-        filename="cryptocurrency/cryptoDataCommon", 
+        filename="CollatzResults/collatzData", 
         use_server_side_cursor=True,
         gzip=False
     )
-    start >> create_common_table >> dynamic_tasks_group >> upload_data_to_gcs >> endgame
+    start  >> create_table >> truncate_table >> dynamic_tasks_group >> upload_data_to_gcs >> endgame
 
